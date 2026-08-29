@@ -2,22 +2,26 @@
 Stage-2 PUS-ViT backbone on T-matrix (+ Span) inputs.
 
 Manuscript Table II:
-  - 10 channels, Conv(10->64, 7x7)/BN/ReLU -> N=1
+  - 10 channels, Conv(10->64, WxW)/BN/ReLU -> N=1 (W=7 Barnaul / W=11 Ober)
   - 4 encoders; after each encoder: inserted PGCL + FC(128->64) residual on CLS only
+  - Topic activations t come from the *frozen* Stage-1 guidance topic network
   - Patch tokens are forwarded unchanged
 """
 
-import copy
 import torch
 import torch.nn as nn
 
 from PhysicsGuidedConvLayer import PhysicsGuidedConvLayer
-from SupervisedTopicModelForPGCL import SupervisedTopicModelForPGCL
 
 
 class PatchEmbedding(nn.Module):
     def __init__(self, in_channels=10, embed_dim=64, img_size=7, patch_size=7):
         super().__init__()
+        if img_size != patch_size:
+            raise ValueError(
+                f"Manuscript uses a single image token (N=1): require img_size==patch_size, "
+                f"got {img_size} vs {patch_size}."
+            )
         self.img_size = img_size
         self.patch_size = patch_size
         self.num_patches = (img_size // patch_size) ** 2
@@ -74,6 +78,7 @@ class VisionTransformer(nn.Module):
         self.use_pgcl = use_pgcl
         self.depth = depth
         self.num_topics = num_topics
+        self.frozen_topic = None  # set via set_frozen_guidance_topic()
 
         self.patch_embed = PatchEmbedding(in_channels, embed_dim, img_size, patch_size)
         num_patches = self.patch_embed.num_patches
@@ -95,46 +100,47 @@ class VisionTransformer(nn.Module):
         nn.init.trunc_normal_(self.cls_token, std=0.02)
         nn.init.trunc_normal_(self.head.weight, std=0.02)
 
+    def set_frozen_guidance_topic(self, topic_model):
+        """Attach Stage-1 topic network as a frozen guidance copy supplying t."""
+        self.frozen_topic = topic_model
+        self.frozen_topic.eval()
+        for p in self.frozen_topic.parameters():
+            p.requires_grad = False
+
     def _build_inserted_pgcl(self, rsd_model_path, embed_dim, num_topics, num_classes, depth):
-        topic_sd, pgcl_sd = {}, {}
+        pgcl_sd = {}
         if rsd_model_path is not None:
             try:
                 state = torch.load(rsd_model_path, map_location="cpu")
-                topic_sd = {
-                    k.replace("topic_model.", ""): v
-                    for k, v in state.items()
-                    if k.startswith("topic_model.")
-                }
                 pgcl_sd = {
                     k.replace("pgcl.", ""): v
                     for k, v in state.items()
                     if k.startswith("pgcl.")
                 }
-                if topic_sd and pgcl_sd:
+                if pgcl_sd:
                     print(f"  Initializing inserted PGCL from Stage-1 checkpoint: {rsd_model_path}")
             except Exception as exc:
-                print(f"  Warning: could not load Stage-1 weights ({exc}); using random init.")
+                print(f"  Warning: could not load Stage-1 PGCL weights ({exc}); using random init.")
 
         for _ in range(depth):
-            topic_model = SupervisedTopicModelForPGCL(
-                embed_dim=embed_dim, num_topics=num_topics, num_classes=num_classes
-            )
             pgcl = PhysicsGuidedConvLayer(
                 embed_dim=embed_dim,
                 num_topics=num_topics,
                 num_classes=num_classes,
                 hidden_dim=128,
             )
-            if topic_sd:
-                topic_model.load_state_dict(topic_sd, strict=False)
             if pgcl_sd:
                 pgcl.load_state_dict(pgcl_sd, strict=False)
             projection = nn.Linear(128, embed_dim)  # FC(128 -> 64)
-            self.rsd_pgcl_layers.append(
-                nn.ModuleDict({"topic_model": topic_model, "pgcl": pgcl, "projection": projection})
-            )
+            # Manuscript: only inserted PGCL + adapter are trained; topic is frozen guidance
+            self.rsd_pgcl_layers.append(nn.ModuleDict({"pgcl": pgcl, "projection": projection}))
 
     def forward(self, x):
+        if self.frozen_topic is None:
+            raise RuntimeError(
+                "Call set_frozen_guidance_topic(...) before forward "
+                "(manuscript: frozen Stage-1 topic supplies t)."
+            )
         b = x.size(0)
         tokens = self.patch_embed(x)
         cls_tokens = self.cls_token.expand(b, -1, -1)
@@ -145,7 +151,10 @@ class VisionTransformer(nn.Module):
             if i < len(self.rsd_pgcl_layers):
                 current_cls = tokens[:, 0]
                 module = self.rsd_pgcl_layers[i]
-                topic, _ = module["topic_model"](current_cls)
+                # Frozen guidance topic supplies t (no gradient into Stage-1 topic copy)
+                with torch.no_grad():
+                    topic, _ = self.frozen_topic(current_cls)
+                topic = topic.detach()
                 enhanced = module["pgcl"](current_cls, topic)
                 # Residual update on CLS only; patch tokens unchanged
                 updated_cls = current_cls + module["projection"](enhanced)
