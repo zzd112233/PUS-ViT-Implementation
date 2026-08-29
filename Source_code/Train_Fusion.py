@@ -117,11 +117,8 @@ class GuidedVisionTransformerT(nn.Module):
         self.guidance_pgcl = guidance_pgcl
         self.num_classes = num_classes
         self.fusion_head = nn.Sequential(
-            nn.Linear(self.backbone.embed_dim + fusion_dim, fusion_dim),
-            nn.LayerNorm(fusion_dim),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(fusion_dim, num_classes),
+            nn.Linear(self.backbone.embed_dim + fusion_dim, fusion_dim),  # 192 -> 128
+            nn.Linear(fusion_dim, num_classes),  # 128 -> M  (Table II: FC(192->128->M))
         )
 
     def forward(self, x):
@@ -148,23 +145,27 @@ def train_rsd_with_pgcl(config):
     print(f"Detected Stage-1 channels: {actual_in_channels} (expected 12)")
 
     model = ViT_RSD(
+        img_size=config.get("img_size", 7),
+        patch_size=config.get("img_size", 7),
         embed_dim=64,
         num_classes=config["num_classes"],
         num_topics=config["num_topics"],
         use_pgcl=True,
         depth=config.get("rsd_depth", 3),
         mlp_dim=256,
-        patch_size=7,
         in_channels=actual_in_channels,
         use_bow=config.get("use_bow", True),
         num_words=config.get("num_words", 64),
     ).to(device)
     print(
         "Stage-1 single-path: BoW -> topic; ViT CLS -> PGCL; head FC(128->M). "
-        f"V={config.get('num_words', 64)}, K={config['num_topics']}"
+        f"V={config.get('num_words', 64)}, K={config['num_topics']}, "
+        f"W={config.get('img_size', 7)}"
     )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"])
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=config["lr"], weight_decay=config.get("weight_decay", 5.0e-4)
+    )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config["epochs"])
     train_loader = build_dataloader(
         config["train_txt"], config["batch_size"], True, config.get("data_root")
@@ -248,16 +249,19 @@ def train_t_with_guidance(config, guidance_topic, guidance_pgcl, rsd_model_path)
     """Stage-2: freeze guidance copy; train backbone/adapters/fusion + KD."""
     device = config["device"]
     base_model = ViT_T(
+        img_size=config.get("img_size", 7),
+        patch_size=config.get("img_size", 7),
         embed_dim=64,
         num_classes=config["num_classes"],
         num_topics=config["num_topics"],
         use_pgcl=False,
         depth=4,
         mlp_dim=256,
-        patch_size=7,
         in_channels=config.get("t_in_channels", 10),
         rsd_model_path=rsd_model_path,
     ).to(device)
+    # Manuscript freeze policy: frozen Stage-1 topic supplies t to inserted PGCL blocks
+    base_model.set_frozen_guidance_topic(guidance_topic.to(device))
 
     guided = GuidedVisionTransformerT(
         base_model,
@@ -270,7 +274,11 @@ def train_t_with_guidance(config, guidance_topic, guidance_pgcl, rsd_model_path)
     print("Frozen Stage-1 guidance copy (topic + PGCL readout).")
 
     trainable = list(guided.backbone.parameters()) + list(guided.fusion_head.parameters())
-    optimizer = torch.optim.AdamW(trainable, lr=config["lr"])
+    # Exclude frozen topic params that may still appear under backbone.frozen_topic
+    trainable = [p for p in trainable if p.requires_grad]
+    optimizer = torch.optim.AdamW(
+        trainable, lr=config["lr"], weight_decay=config.get("weight_decay", 5.0e-4)
+    )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config["epochs"])
     train_loader = build_dataloader(
         config["train_txt"], config["batch_size"], True, config.get("data_root")
@@ -361,6 +369,8 @@ def build_argparser():
     p.add_argument("--num_classes", type=int, default=None)
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=None)
+    p.add_argument("--img_size", type=int, default=None, help="Patch/window size W (7 Barnaul / 11 Ober)")
+    p.add_argument("--weight_decay", type=float, default=None)
     p.add_argument("--device", type=str, default=None, choices=["cuda", "cpu"])
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--stage", type=str, default="both", choices=["both", "rsd", "t"])
@@ -370,8 +380,18 @@ def build_argparser():
 
 def merge_config(args):
     cfg = load_yaml_config(args.config)
-    for key in ["data_root", "save_dir", "num_classes", "epochs", "batch_size", "device", "seed"]:
-        val = getattr(args, key)
+    for key in [
+        "data_root",
+        "save_dir",
+        "num_classes",
+        "epochs",
+        "batch_size",
+        "device",
+        "seed",
+        "img_size",
+        "weight_decay",
+    ]:
+        val = getattr(args, key, None)
         if val is not None:
             cfg[key] = val
     if args.rsd_train:
@@ -385,8 +405,10 @@ def merge_config(args):
 
     cfg.setdefault("seed", 42)
     cfg.setdefault("batch_size", 32)
-    cfg.setdefault("epochs", 50)
-    cfg.setdefault("lr", 4.0e-4)
+    cfg.setdefault("epochs", 120)  # manuscript Table VII
+    cfg.setdefault("lr", 4.0e-4)  # manuscript Table VII
+    cfg.setdefault("weight_decay", 5.0e-4)  # manuscript Table VII
+    cfg.setdefault("img_size", 7)  # 7 Barnaul / 11 Oberpfaffenhofen
     cfg.setdefault("num_classes", 9)
     cfg.setdefault("num_topics", 15)
     cfg.setdefault("rsd_depth", 3)
@@ -416,6 +438,8 @@ def merge_config(args):
         "batch_size": cfg["batch_size"],
         "epochs": cfg["epochs"],
         "lr": cfg["lr"],
+        "weight_decay": cfg["weight_decay"],
+        "img_size": cfg["img_size"],
         "num_classes": cfg["num_classes"],
         "num_topics": cfg["num_topics"],
         "save_dir": cfg["save_dir"],
@@ -443,6 +467,8 @@ def merge_config(args):
 
 def load_guidance_from_ckpt(ckpt_path, cfg):
     probe = ViT_RSD(
+        img_size=cfg.get("img_size", 7),
+        patch_size=cfg.get("img_size", 7),
         embed_dim=64,
         num_classes=cfg["num_classes"],
         num_topics=cfg["num_topics"],
@@ -465,8 +491,12 @@ if __name__ == "__main__":
     cfg = merge_config(args)
     set_seed(int(cfg.get("seed", 42)))
 
-    print("PUS-ViT training")
+    print("PUS-ViT training (manuscript-aligned defaults)")
     print(f"  device={cfg['device']}, save_dir={cfg['save_dir']}")
+    print(
+        f"  epochs={cfg['epochs']}, batch={cfg['batch_size']}, "
+        f"lr={cfg['lr']}, weight_decay={cfg['weight_decay']}, W={cfg['img_size']}"
+    )
     print(f"  Stage-1 lists: {cfg['rsd']['train_txt']} | val={cfg['rsd']['test_txt']}")
     print(f"  Stage-2 lists: {cfg['t']['train_txt']} | val={cfg['t']['test_txt']}")
     print(f"  BoW={cfg['rsd']['use_bow']}, K={cfg['num_topics']}")
