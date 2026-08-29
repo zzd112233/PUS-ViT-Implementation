@@ -18,6 +18,11 @@ from SupervisedTopicModelForPGCL import SupervisedTopicModelForPGCL
 class PatchEmbedding(nn.Module):
     def __init__(self, in_channels=12, embed_dim=64, img_size=7, patch_size=7):
         super().__init__()
+        if img_size != patch_size:
+            raise ValueError(
+                f"Manuscript uses a single image token (N=1): require img_size==patch_size, "
+                f"got {img_size} vs {patch_size}."
+            )
         self.img_size = img_size
         self.patch_size = patch_size
         self.num_patches = (img_size // patch_size) ** 2
@@ -106,12 +111,8 @@ class VisionTransformer(nn.Module):
                 num_classes=num_classes,
                 hidden_dim=self.pgcl_hidden_dim,
             )
-            # Stage-1 head: FC(128 -> M) on PGCL readout
-            self.pgcl_classifier = nn.Sequential(
-                nn.LayerNorm(self.pgcl_hidden_dim),
-                nn.GELU(),
-                nn.Linear(self.pgcl_hidden_dim, num_classes),
-            )
+            # Stage-1 head: FC(128 -> M) on PGCL readout (Table II)
+            self.pgcl_classifier = nn.Linear(self.pgcl_hidden_dim, num_classes)
         else:
             self.head = nn.Linear(embed_dim, num_classes)
 
