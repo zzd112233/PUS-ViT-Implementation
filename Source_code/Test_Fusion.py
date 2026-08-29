@@ -113,7 +113,10 @@ def main():
     print(f"Stage-1 ckpt: {pgcl_path}")
     print(f"Stage-2 ckpt: {fusion_path}")
 
+    w = args.window_size
     rsd_model = ViT_RSD(
+        img_size=w,
+        patch_size=w,
         embed_dim=64,
         num_classes=args.num_classes,
         num_topics=args.num_topics,
@@ -122,7 +125,6 @@ def main():
         in_channels=12,
         depth=3,
         mlp_dim=256,
-        patch_size=7,
     ).to(device)
     rsd_model.load_state_dict(torch.load(pgcl_path, map_location=device), strict=False)
     rsd_model.eval()
@@ -132,6 +134,8 @@ def main():
         p.requires_grad = False
 
     base_model = ViT_T(
+        img_size=w,
+        patch_size=w,
         embed_dim=64,
         num_classes=args.num_classes,
         num_topics=args.num_topics,
@@ -140,14 +144,15 @@ def main():
         in_channels=10,
         depth=4,
         mlp_dim=256,
-        patch_size=7,
     ).to(device)
+    base_model.set_frozen_guidance_topic(guidance_topic)
     fusion_model = GuidedVisionTransformerT(
         base_model, guidance_topic, guidance_pgcl, num_classes=args.num_classes
     ).to(device)
     fusion_model.load_state_dict(torch.load(fusion_path, map_location=device), strict=False)
     fusion_model.eval()
-
+    # Ensure frozen topic is attached after load (state_dict may not include it)
+    fusion_model.backbone.set_frozen_guidance_topic(guidance_topic)
     t_arr, t_key = load_mat_array(args.t_mat, args.t_key)
     print(f"Loaded T cube key='{t_key}', shape={t_arr.shape}")
     if t_arr.ndim != 3:
