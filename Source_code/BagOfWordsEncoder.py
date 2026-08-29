@@ -1,8 +1,8 @@
 """
 Bag-of-visual-words (BoW) encoder for Stage-1 RSD patches.
 
-Local descriptors at each pixel -> soft codeword assignment -> histogram w in R^V
--> linear projection to d for the topic branch (manuscript Table II).
+Manuscript Eq. (11): hard nearest-codeword assignment -> histogram w in R^V
+-> linear projection to d for the topic branch (Table II).
 """
 
 import torch
@@ -16,6 +16,7 @@ class BagOfWordsEncoder(nn.Module):
         self.in_channels = in_channels
         self.num_words = num_words
         self.embed_dim = embed_dim
+        # temperature kept for API compatibility; hard assignment does not use it
         self.temperature = temperature
 
         self.codebook = nn.Parameter(torch.randn(num_words, in_channels))
@@ -37,8 +38,9 @@ class BagOfWordsEncoder(nn.Module):
         """
         b, c, h, w = x.shape
         desc = x.permute(0, 2, 3, 1).reshape(b, h * w, c)
+        # Hard assignment: z_n = argmin_j ||d_n - c_j||_2  (manuscript Eq. 11)
         dist = torch.cdist(desc, self.codebook.unsqueeze(0).expand(b, -1, -1))
-        assign = F.softmax(-dist / max(self.temperature, 1e-6), dim=-1)
-        hist = assign.sum(dim=1)
+        idx = dist.argmin(dim=-1)  # (B, H*W)
+        hist = F.one_hot(idx, num_classes=self.num_words).to(dtype=x.dtype).sum(dim=1)
         hist = hist / (hist.sum(dim=1, keepdim=True) + 1e-8)
         return self.hist_proj(hist), hist
