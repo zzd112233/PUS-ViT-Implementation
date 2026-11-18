@@ -4,7 +4,7 @@ This folder reproduces the Pearson correlations between learned topic activation
 
 ## Sample selection
 
-Each dataset uses its official paired test list. `T_Test.txt` and `RSD_Test.txt` are line-aligned: line \(i\) is the same patch in the coherency-matrix list and the 12-channel RSD list.
+Each dataset uses its official paired test list. ` T_Validation.txt` and `RSD_Validation.txt` are line-aligned: line \(i\) is the same patch in the coherency-matrix list and the 12-channel RSD list.
 
 | Dataset | Patches | Per class | Labels |
 | --- | ---: | ---: | --- |
