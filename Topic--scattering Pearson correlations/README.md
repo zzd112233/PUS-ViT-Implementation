@@ -1,10 +1,10 @@
 # Topic–scattering correlation
 
-This folder reproduces the Pearson correlations between learned topic activations and polarimetric quantities in Figs. 11 and 16. Both figures come from the checkpoints and paired test lists stored here. Topic index \(T_k\) is the \(k\)-th component of that activation. It is not an entry of the coherency matrix.
+This folder reproduces the Pearson correlations between learned topic activations and polarimetric features in Figs. 11 and 16. Both figures come from the checkpoints and paired validation lists stored here. Topic index \(T_k\) is the \(k\)-th component of that activation. It is not an entry of the coherency matrix.
 
 ## Sample selection
 
-Each dataset uses its official paired test list. `T_Test.txt` and `RSD_Test.txt` are line-aligned: line \(i\) is the same patch in the coherency-matrix list and the 12-channel RSD list.
+Each dataset uses the paired validation lists from Table III of the manuscript. `T_validation.txt` and `RSD_validation.txt` are line-aligned: line \(i\) is the same patch in the coherency-matrix list and the 12-channel RSD list. These are validation samples, not the remaining labeled test pixels used for final classification evaluation.
 
 | Dataset | Patches | Per class | Labels |
 | --- | ---: | ---: | --- |
@@ -15,7 +15,7 @@ Background pixels are not in these lists. The polarimetric vector of a patch is 
 
 ## Topic activation and checkpoints
 
-The topic vector is the softmax of the last linear layer in `feature_to_topic`, taken before the ReLU used by PGCL. The correlation is the Pearson coefficient between that component and one polarimetric quantity over the paired test patches.
+The topic vector is the softmax of the last linear layer in `feature_to_topic`, taken before the ReLU used by PGCL. The correlation is the Pearson coefficient between that component and one polarimetric feature over the paired validation patches.
 
 | Dataset | Stage-2 fusion checkpoint | Stage-1 topic checkpoint |
 | --- | --- | --- |
@@ -28,11 +28,11 @@ Checked Barnaul cells: \(r(T_6,P_D)=-0.42\), \(r(T_{13},P_V)=0.14\), \(r(T_{14},
 
 Checked Oberpfaffenhofen cells: \(r(T_1,P_S)=-0.77\), \(r(T_{12},\mathrm{Span})=0.70\), \(r(T_7,P_D)=0.69\).
 
-These associations describe mixtures of polarimetric quantities. They do not assign each topic to one scattering mechanism.
+These associations describe mixtures of polarimetric features. They do not assign each topic to one scattering mechanism.
 
 ## Run
 
-From `code/`, with the patch files named in the two test lists available on disk:
+From `code/`, with the patch files named in the two validation lists available on disk:
 
 ```text
 python Plot_Five_Metrics_PDF.py

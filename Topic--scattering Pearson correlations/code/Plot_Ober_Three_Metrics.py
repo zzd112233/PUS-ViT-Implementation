@@ -53,8 +53,8 @@ class LegacyTopicModel(nn.Module):
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAVE_DIR = os.path.join(ROOT, "Ober")
 MODEL_DIR = os.path.join(SAVE_DIR, "model")
-T_TEST = os.path.join(SAVE_DIR, "T_Test.txt")
-RSD_TEST = os.path.join(SAVE_DIR, "RSD_Test.txt")
+T_VAL = os.path.join(SAVE_DIR, "T_validation.txt")
+RSD_VAL = os.path.join(SAVE_DIR, "RSD_validation.txt")
 NUM_CLASSES = 7
 NUM_TOPICS = 15
 IMG_SIZE = 11
@@ -499,7 +499,7 @@ def fig_gating(model, cache):
 def main():
     os.makedirs(SAVE_DIR, exist_ok=True)
     model, pgcl_path, fusion_path = load_models()
-    t_items, r_items = load_paired(T_TEST, RSD_TEST)
+    t_items, r_items = load_paired(T_VAL, RSD_VAL)
     print("samples:", len(t_items))
     cache = extract_cache(model, t_items, r_items)
     acc = 100.0 * (cache["preds"] == cache["labels"]).mean()
