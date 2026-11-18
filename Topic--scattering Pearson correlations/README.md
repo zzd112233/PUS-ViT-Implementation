@@ -17,7 +17,7 @@ Background pixels are not in these lists. The polarimetric vector of a patch is 
 
 The topic vector is the softmax of the last linear layer in `feature_to_topic`, taken before the ReLU used by PGCL. The correlation is the Pearson coefficient between that component and one polarimetric quantity over the paired test patches.
 
-| Dataset | Fusion checkpoint | Stage-1 topic checkpoint |
+| Dataset | Stage-2 fusion checkpoint | Stage-1 topic checkpoint |
 | --- | --- | --- |
 | Barnaul | `Barnaul/model/fusion_model_best.pth` | `Barnaul/model/pgcl_model_best.pth` |
 | Oberpfaffenhofen | `Ober/model/fusion_model_best.pth` | `Ober/model/pgcl_model_best.pth` |
